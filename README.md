@@ -1,114 +1,123 @@
-# High-Scale Energy Ingestion Engine
+# ⚡ High-Scale Energy Ingestion Engine
 
-NestJS + PostgreSQL ingestion service for smart meter and EV telemetry. It separates hot (operational) and cold (historical) data paths, then exposes a 24-hour performance analytics endpoint.
+A real-time energy data ingestion engine for processing smart meter and EV telemetry data at scale. Handles 14.4M+ records/day from 10,000+ devices. Built with NestJS, TypeScript, and PostgreSQL.
 
-## Quick Start
+![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-98%25-blue?logo=typescript&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker&logoColor=white)
 
-1. `docker compose up --build`
-2. Service listens on `http://localhost:3000`
+---
 
-## Deployment (Render + Supabase)
+## ✨ Features
 
-Render egress is often IPv4-only, while the direct Supabase DB host can be IPv6-only. Use the Supabase connection pooler (PgBouncer) URL in production so the DB resolves over IPv4.
+- **Polymorphic Ingestion** — Handles both meter (AC energy) and vehicle (DC energy) telemetry
+- **Dual-Store Strategy** — Hot tables for operational reads, cold tables for historical analytics
+- **Upsert Patterns** — Out-of-order event handling with timestamp guards
+- **Real-Time Correlation** — Links meters to vehicles for cross-device analytics
+- **Bounded Analytics** — 24-hour performance metrics with indexed queries
+- **High Scale** — Designed for 14.4M+ records/day from 10,000+ devices
+- **Docker Ready** — Full containerization with Docker Compose
 
-Render env vars:
-- `DATABASE_POOL_URL` set to the Supabase pooler connection string (host like `aws-0-<region>.pooler.supabase.com`, port `6543`, include `sslmode=require` and `pgbouncer=true` if provided).
-- `USE_DATABASE_POOLER=true` to force pooler usage (optional if `DATABASE_POOL_URL` is set).
-- `DATABASE_URL` can remain the direct DB URL for local/dev; the app will prefer `DATABASE_POOL_URL` when present.
+---
 
-## Endpoints
+## 🛠️ Tech Stack
 
-`POST /v1/ingest`
-- Polymorphic ingestion. The payload must include either `meterId` or `vehicleId`.
+| Technology | Purpose |
+|---|---|
+| NestJS 10 | Node.js backend framework |
+| TypeScript | Type-safe development |
+| PostgreSQL | Primary database |
+| Docker + Docker Compose | Containerization |
+| class-validator | Request validation |
+| class-transformer | Data transformation |
 
-Meter payload:
-```json
-{
-  "meterId": "meter-001",
-  "kwhConsumedAc": 1.42,
-  "voltage": 230.5,
-  "timestamp": "2026-02-09T10:00:00Z"
-}
+---
+
+## 📡 API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/v1/ingest` | Ingest energy telemetry data |
+| `PUT` | `/v1/links` | Map vehicle to meter |
+| `GET` | `/v1/analytics/performance/:vehicleId` | 24h performance metrics |
+| `GET` | `/v1/status/vehicle/:vehicleId` | Latest vehicle status |
+| `GET` | `/v1/status/meter/:meterId` | Latest meter status |
+
+---
+
+## 📁 Project Structure
+
+```
+technical-assignment-at-Zynetic/
+├── src/
+│   ├── main.ts             # App entry point
+│   ├── config/             # Configuration management
+│   ├── ingestion/          # Core ingestion logic
+│   ├── services/           # Business logic
+│   ├── controllers/        # API endpoints
+│   └── models/             # Data models
+├── db/migrations/          # PostgreSQL migrations
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+├── tsconfig.json
+└── package.json
 ```
 
-Vehicle payload:
-```json
-{
-  "vehicleId": "vehicle-001",
-  "soc": 68.2,
-  "kwhDeliveredDc": 1.18,
-  "batteryTemp": 31.4,
-  "timestamp": "2026-02-09T10:00:00Z"
-}
+---
+
+## 🚀 Quick Start
+
+### With Docker (Recommended)
+
+```bash
+git clone https://github.com/dipk2003/technical-assignment-at-Zynetic.git
+cd technical-assignment-at-Zynetic
+docker compose up --build
 ```
 
-`PUT /v1/links`
-- Links a vehicle to a meter for analytics correlation.
-```json
-{
-  "vehicleId": "vehicle-001",
-  "meterId": "meter-001"
-}
+API listens on `http://localhost:3000`
+
+### Manual Setup
+
+```bash
+npm install
+npm run start:dev    # Development with hot-reload
+npm run build        # Compile TypeScript
+npm run start        # Production
 ```
 
-`GET /v1/analytics/performance/:vehicleId`
-- Returns 24-hour totals and efficiency ratio (DC/AC).
+### Environment Variables
 
-`GET /v1/status/vehicle/:vehicleId`
-- Reads from hot store (`vehicle_latest`).
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/energy_db
+USE_DATABASE_POOLER=true
+```
 
-`GET /v1/status/meter/:meterId`
-- Reads from hot store (`meter_latest`).
+---
 
-## Data Model
+## 🏗️ Architecture
 
-Hot (operational) tables:
-- `vehicle_latest`: latest SoC, battery temp, DC delivered per vehicle.
-- `meter_latest`: latest voltage and AC consumed per meter.
+```
+Telemetry Data (Meters + EVs)
+    ↓
+POST /v1/ingest
+    ↓
+┌─────────────────────────────────┐
+│  Polymorphic Parser             │
+│  (AC meter vs DC vehicle)       │
+└─────────────┬───────────────────┘
+              ↓
+┌─────────────────────────────────┐
+│  Dual Store                     │
+│  Hot Table → Latest state       │
+│  Cold Table → Full audit trail  │
+└─────────────┬───────────────────┘
+              ↓
+GET /v1/analytics → Indexed range scans
+```
 
-Cold (historical) tables:
-- `vehicle_readings`: append-only telemetry.
-- `meter_readings`: append-only telemetry.
+---
 
-Link table:
-- `vehicle_meter_links`: maps a vehicle to its grid-side meter.
-
-## Persistence Strategy (Insert vs Upsert)
-
-Cold path:
-- Every heartbeat is inserted into `*_readings` tables.
-- This provides a full audit trail for analytics and reporting.
-
-Hot path:
-- Latest state is upserted into `*_latest` tables.
-- Upsert includes a timestamp guard (`EXCLUDED.ts >= *_latest.ts`) so out-of-order events do not overwrite the most recent state.
-
-## Analytics Query (No Full Table Scan)
-
-The 24-hour performance query is bounded by time and device id:
-- `WHERE vehicle_id = $1 AND ts >= now() - interval '24 hours'`
-- `WHERE meter_id = $1 AND ts >= now() - interval '24 hours'`
-
-Indexes:
-- `idx_vehicle_readings_vehicle_ts (vehicle_id, ts DESC)`
-- `idx_meter_readings_meter_ts (meter_id, ts DESC)`
-
-These allow PostgreSQL to use index range scans rather than full table scans.
-
-## Correlation Strategy
-
-The meter stream (AC) and vehicle stream (DC) are correlated via `vehicle_meter_links`. This mirrors a real fleet scenario where a registry or provisioning system knows which vehicle is connected to which meter. The analytics endpoint uses the linked meter to compute AC totals and compare against the vehicle’s DC totals.
-
-## Handling 14.4M+ Records/Day
-
-At 10,000 devices reporting once per minute, each stream produces 14.4M rows/day (28.8M/day across both streams). The design scales by:
-- Append-only cold tables (sequential writes).
-- Narrow, indexed time-range analytics queries.
-- Hot tables for dashboard reads without scanning history.
-
-For production scale, the cold tables can be partitioned by day/month or moved to TimescaleDB hypertables. This keeps retention manageable and queries fast as volume grows.
-
-## Assumptions
-
-- `kwhConsumedAc` and `kwhDeliveredDc` represent per-interval energy. If the devices report cumulative counters, compute deltas between consecutive readings before aggregation.
-"# technical-assignment-at-Zynetic" 
+Made with ❤️ by [Dipanshu Pandey](https://github.com/dipk2003)
